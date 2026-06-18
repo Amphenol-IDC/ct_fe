@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include "connectivity_tester.h"
 #include "software_ver.h"
+#include "gitversion.h"
 
 /* USER CODE END Includes */
 
@@ -79,7 +80,8 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
   if (b1->magic == FW_MAGIC) {
       snprintf(ver_str, sizeof(ver_str), "%d.%d.%d", b1->major, b1->minor,b1->patch);
 
-      printf("Software image version: %-8s %-24s\r\n", ver_str, b1->build_time);
+      printf("Software image version: %-8s (%s) %-24s\r\n",
+              ver_str, GIT_SHORT_SHA, b1->build_time);
   } else {
       printf("Invalid software version\r\n");
   }
