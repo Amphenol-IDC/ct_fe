@@ -1,0 +1,26 @@
+# ===== Build output =====
+Debug/
+Application/Inc/gitversion.h
+
+# ===== STM32CubeIDE =====
+.settings/
+.mxproject
+*.launch
+.metadata
+
+# ===== Toolchain =====
+*.o
+*.d
+*.elf
+*.map
+*.hex
+*.bin
+
+# ===== Editors =====
+.vscode/
+.idea/
+
+# ===== OS =====
+Thumbs.db
+.DS_Store
+STM32F769NIHX_RAM.ld
