@@ -42,6 +42,7 @@ void ConnectivityTesterTask(ULONG argument)
     uint8_t tx_toggle_value = 0;
     uint32_t ctrl_value;
     uint32_t stop_value;
+    uint32_t prev_rx_only_result = 0;
 
     /* Configure only TX pairs as outputs; RX pin setup remains under IOC/user control. */
     GpioChannels_ConfigTxOutputs();
@@ -63,6 +64,12 @@ void ConnectivityTesterTask(ULONG argument)
 
         uint32_t faults = GpioChannels_CheckAllFaults();
         uint32_t rx_only_result = faults & RX_PAIR_RESULT_MASK;
+
+        if (rx_only_result != prev_rx_only_result)
+        {
+// return debugging when 64 gpio_channel_table[] is properly defined:  printf("RX fault result changed: 0x%08lX\r\n", (unsigned long)rx_only_result);
+            prev_rx_only_result = rx_only_result;
+        }
 
         SpiRegs_SetRxResult(rx_only_result);
 
