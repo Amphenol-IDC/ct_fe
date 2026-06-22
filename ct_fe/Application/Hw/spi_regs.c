@@ -17,6 +17,7 @@
 #include "spi_regs.h"
 #include "main.h"
 #include <string.h>
+#include <stdio.h>
 
 /* External SPI handle from main.c */
 extern SPI_HandleTypeDef hspi4;
@@ -70,6 +71,7 @@ uint8_t SpiRegs_GetCtrl(uint32_t *value)
     if (spi_regs.ctrl_written)
     {
         *value = spi_regs.ctrl;
+        printf("[SPI] CTRL write received: 0x%08lX\r\n", (unsigned long)*value);
         spi_regs.ctrl_written = 0;
         return 1;
     }
@@ -81,6 +83,7 @@ uint8_t SpiRegs_GetStop(uint32_t *value)
     if (spi_regs.stop_written)
     {
         *value = spi_regs.stop;
+        printf("[SPI] STOP write received: 0x%08lX\r\n", (unsigned long)*value);
         spi_regs.stop_written = 0;
         return 1;
     }
@@ -172,6 +175,7 @@ static void SpiRegs_PrepareReadData(void)
         case SPI_REG_RX_RESULT:
             /* Read and Clear */
             val32 = spi_regs.rx_result;
+            printf("[SPI] Read RX_RESULT prepared: 0x%08lX\r\n", (unsigned long)val32);
             spi_regs.rx_result = 0;  /* Clear on read */
             /* Big-endian: MSB first */
             spi_regs.tx_buf[0] = (uint8_t)(val32 >> 24);
@@ -182,14 +186,17 @@ static void SpiRegs_PrepareReadData(void)
 
         case SPI_REG_DEVICE_TYPE:
             spi_regs.tx_buf[0] = spi_regs.device_type;
+            printf("[SPI] Read DEVICE_TYPE prepared: 0x%02X\r\n", (unsigned int)spi_regs.tx_buf[0]);
             break;
 
         case SPI_REG_DEVICE_REV:
             spi_regs.tx_buf[0] = spi_regs.device_rev;
+            printf("[SPI] Read DEVICE_REV prepared: 0x%02X\r\n", (unsigned int)spi_regs.tx_buf[0]);
             break;
 
         case SPI_REG_DEVICE_ID_LO:
             val16 = spi_regs.device_id;
+            printf("[SPI] Read DEVICE_ID_LO prepared: 0x%04X\r\n", (unsigned int)val16);
             /* Big-endian: MSB first */
             spi_regs.tx_buf[0] = (uint8_t)(val16 >> 8);
             spi_regs.tx_buf[1] = (uint8_t)(val16);
@@ -197,6 +204,7 @@ static void SpiRegs_PrepareReadData(void)
 
         case SPI_REG_DEVICE_ID_HI:
             spi_regs.tx_buf[0] = (uint8_t)(spi_regs.device_id >> 8);
+            printf("[SPI] Read DEVICE_ID_HI prepared: 0x%02X\r\n", (unsigned int)spi_regs.tx_buf[0]);
             break;
 
         /* CTRL and STOP are Write-Only, return 0 on read */
@@ -204,6 +212,8 @@ static void SpiRegs_PrepareReadData(void)
         case SPI_REG_STOP:
         default:
             memset(spi_regs.tx_buf, 0, sizeof(spi_regs.tx_buf));
+            printf("[SPI] Read addr 0x%02X is write-only/invalid, prepared: 0x00\r\n",
+                   (unsigned int)spi_regs.reg_addr);
             break;
     }
 }
