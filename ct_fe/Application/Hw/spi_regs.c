@@ -4,13 +4,15 @@
  * @brief   SPI Slave Register Map implementation
  *
  * Protocol:
- *   Master sends 1 command byte: [7]=R/W (1=Read, 0=Write), [6:0]=Address
- *   Then data bytes follow (MSB first for multi-byte registers).
+ *   Master always transfers one fixed 5-byte frame while NSS is low:
+ *     Byte 0: command byte [7]=R/W (1=Read, 0=Write), [6:0]=Address
+ *     Byte 1-4: write data from master, or dummy bytes for reads
  *
- *   For Read:  Slave outputs register data on MISO during subsequent clocks
- *   For Write: Master sends data bytes on MOSI during subsequent clocks
+ *   The slave pre-arms the whole 5-byte frame before clocks arrive. This avoids
+ *   SPI underrun caused by re-arming one byte at a time in the ISR.
  *
- *   NSS going high (deselected) ends the transaction.
+ *   Read response is pipelined: a read command prepares MISO data for the next
+ *   5-byte frame. The master should send a second dummy/NOP frame to collect it.
  ******************************************************************************
  */
 
@@ -22,23 +24,31 @@
 /* External SPI handle from main.c */
 extern SPI_HandleTypeDef hspi4;
 
+#define SPI_FRAME_SIZE          5U
+#define SPI_FRAME_CMD_INDEX     0U
+#define SPI_FRAME_DATA_INDEX    1U
+
 /* --------------------------------------------------------------------------
  * Private variables
  * -------------------------------------------------------------------------- */
 static SpiRegs_t spi_regs;
 
-/* DMA/IT buffers - first byte is command, next 4 are data */
-static uint8_t spi_rx_byte;
-static uint8_t spi_tx_byte;
+/* Fixed full-duplex frame buffers. Keep them static for HAL IT lifetime. */
+static uint8_t spi_rx_frame[SPI_FRAME_SIZE];
+static uint8_t spi_tx_frame[SPI_FRAME_SIZE];
+static volatile uint32_t spi_error_count;
+static volatile uint32_t spi_rearm_error_count;
+static volatile uint32_t spi_last_error;
 
 /* --------------------------------------------------------------------------
  * Private function prototypes
  * -------------------------------------------------------------------------- */
 static void SpiRegs_StartListening(void);
-static void SpiRegs_HandleCommand(uint8_t cmd);
+static void SpiRegs_HandleFrame(void);
 static void SpiRegs_PrepareReadData(void);
 static void SpiRegs_ProcessWriteData(void);
 static uint8_t SpiRegs_GetRegSize(uint8_t addr);
+static void SpiRegs_QueueReadResponse(void);
 
 /* --------------------------------------------------------------------------
  * Public API Implementation
@@ -47,6 +57,8 @@ static uint8_t SpiRegs_GetRegSize(uint8_t addr);
 void SpiRegs_Init(void)
 {
     memset(&spi_regs, 0, sizeof(spi_regs));
+    memset(spi_rx_frame, 0, sizeof(spi_rx_frame));
+    memset(spi_tx_frame, 0, sizeof(spi_tx_frame));
 
     /* Initialize read-only registers */
     spi_regs.device_type = DEVICE_TYPE_VALUE;
@@ -57,7 +69,7 @@ void SpiRegs_Init(void)
     spi_regs.state = SPI_SLAVE_STATE_IDLE;
     spi_regs.byte_index = 0;
 
-    /* Begin listening for first command byte */
+    /* Begin listening for a full fixed-size frame */
     SpiRegs_StartListening();
 }
 
@@ -101,9 +113,15 @@ const SpiRegs_t* SpiRegs_GetContext(void)
 
 static void SpiRegs_StartListening(void)
 {
-    /* Prepare dummy TX byte (0x00) and listen for 1 byte from master */
-    spi_tx_byte = 0x00;
-    HAL_SPI_TransmitReceive_IT(&hspi4, &spi_tx_byte, &spi_rx_byte, 1);
+    HAL_StatusTypeDef status;
+
+    memset(spi_rx_frame, 0, sizeof(spi_rx_frame));
+
+    status = HAL_SPI_TransmitReceive_IT(&hspi4, spi_tx_frame, spi_rx_frame, SPI_FRAME_SIZE);
+    if (status != HAL_OK)
+    {
+        spi_rearm_error_count++;
+    }
 }
 
 static uint8_t SpiRegs_GetRegSize(uint8_t addr)
@@ -117,6 +135,7 @@ static uint8_t SpiRegs_GetRegSize(uint8_t addr)
 
         case SPI_REG_DEVICE_TYPE:
         case SPI_REG_DEVICE_REV:
+        case SPI_REG_DEVICE_ID_HI:
             return 1;  /* 8-bit */
 
         case SPI_REG_DEVICE_ID_LO:
@@ -127,41 +146,50 @@ static uint8_t SpiRegs_GetRegSize(uint8_t addr)
     }
 }
 
-static void SpiRegs_HandleCommand(uint8_t cmd)
+static void SpiRegs_HandleFrame(void)
 {
-    spi_regs.cmd_byte = cmd;
-    spi_regs.is_read  = (cmd & SPI_CMD_RW_BIT) ? 1 : 0;
-    spi_regs.reg_addr = cmd & SPI_CMD_ADDR_MASK;
+    uint8_t reg_size;
+
+    spi_regs.cmd_byte = spi_rx_frame[SPI_FRAME_CMD_INDEX];
+    spi_regs.is_read  = (spi_regs.cmd_byte & SPI_CMD_RW_BIT) ? 1 : 0;
+    spi_regs.reg_addr = spi_regs.cmd_byte & SPI_CMD_ADDR_MASK;
     spi_regs.byte_index = 0;
     spi_regs.state = SPI_SLAVE_STATE_DATA;
 
-    if (spi_regs.is_read)
-    {
-        /* Prepare data to send back to master */
-        SpiRegs_PrepareReadData();
-    }
+    reg_size = SpiRegs_GetRegSize(spi_regs.reg_addr);
 
-    /* Continue transaction - listen for next byte (or send data) */
     if (spi_regs.is_read)
     {
-        /* Send first data byte, receive dummy from master */
-        uint8_t reg_size = SpiRegs_GetRegSize(spi_regs.reg_addr);
-        if (reg_size > 0)
-        {
-            spi_tx_byte = spi_regs.tx_buf[0];
-            spi_regs.byte_index = 1;
-        }
-        else
-        {
-            spi_tx_byte = 0x00;  /* Unknown register - send zeros */
-        }
-        HAL_SPI_TransmitReceive_IT(&hspi4, &spi_tx_byte, &spi_rx_byte, 1);
+        SpiRegs_PrepareReadData();
+        SpiRegs_QueueReadResponse();
+    }
+    else if (reg_size > 0U)
+    {
+        memset(spi_regs.rx_buf, 0, sizeof(spi_regs.rx_buf));
+        memcpy(spi_regs.rx_buf, &spi_rx_frame[SPI_FRAME_DATA_INDEX], reg_size);
+        SpiRegs_ProcessWriteData();
+
+        /* Writes do not return data. Clear queued MISO payload. */
+        memset(spi_tx_frame, 0, sizeof(spi_tx_frame));
     }
     else
     {
-        /* Write transaction - receive data from master */
-        spi_tx_byte = 0x00;
-        HAL_SPI_TransmitReceive_IT(&hspi4, &spi_tx_byte, &spi_rx_byte, 1);
+        memset(spi_tx_frame, 0, sizeof(spi_tx_frame));
+    }
+
+    spi_regs.state = SPI_SLAVE_STATE_IDLE;
+}
+
+/* Start copies to byte 0 - So on MISO data is starting at byte 0 */
+static void SpiRegs_QueueReadResponse(void)
+{
+    uint8_t reg_size = SpiRegs_GetRegSize(spi_regs.reg_addr);
+
+    memset(spi_tx_frame, 0, sizeof(spi_tx_frame));
+
+    if (reg_size > 0U)
+    {
+        memcpy(spi_tx_frame, spi_regs.tx_buf, reg_size);
     }
 }
 
@@ -170,12 +198,13 @@ static void SpiRegs_PrepareReadData(void)
     uint32_t val32;
     uint16_t val16;
 
+    memset(spi_regs.tx_buf, 0, sizeof(spi_regs.tx_buf));
+
     switch (spi_regs.reg_addr)
     {
         case SPI_REG_RX_RESULT:
             /* Read and Clear */
             val32 = spi_regs.rx_result;
-            printf("[SPI] Read RX_RESULT prepared: 0x%08lX\r\n", (unsigned long)val32);
             spi_regs.rx_result = 0;  /* Clear on read */
             /* Big-endian: MSB first */
             spi_regs.tx_buf[0] = (uint8_t)(val32 >> 24);
@@ -186,17 +215,14 @@ static void SpiRegs_PrepareReadData(void)
 
         case SPI_REG_DEVICE_TYPE:
             spi_regs.tx_buf[0] = spi_regs.device_type;
-            printf("[SPI] Read DEVICE_TYPE prepared: 0x%02X\r\n", (unsigned int)spi_regs.tx_buf[0]);
             break;
 
         case SPI_REG_DEVICE_REV:
             spi_regs.tx_buf[0] = spi_regs.device_rev;
-            printf("[SPI] Read DEVICE_REV prepared: 0x%02X\r\n", (unsigned int)spi_regs.tx_buf[0]);
             break;
 
         case SPI_REG_DEVICE_ID_LO:
             val16 = spi_regs.device_id;
-            printf("[SPI] Read DEVICE_ID_LO prepared: 0x%04X\r\n", (unsigned int)val16);
             /* Big-endian: MSB first */
             spi_regs.tx_buf[0] = (uint8_t)(val16 >> 8);
             spi_regs.tx_buf[1] = (uint8_t)(val16);
@@ -204,16 +230,12 @@ static void SpiRegs_PrepareReadData(void)
 
         case SPI_REG_DEVICE_ID_HI:
             spi_regs.tx_buf[0] = (uint8_t)(spi_regs.device_id >> 8);
-            printf("[SPI] Read DEVICE_ID_HI prepared: 0x%02X\r\n", (unsigned int)spi_regs.tx_buf[0]);
             break;
 
         /* CTRL and STOP are Write-Only, return 0 on read */
         case SPI_REG_CTRL:
         case SPI_REG_STOP:
         default:
-            memset(spi_regs.tx_buf, 0, sizeof(spi_regs.tx_buf));
-            printf("[SPI] Read addr 0x%02X is write-only/invalid, prepared: 0x00\r\n",
-                   (unsigned int)spi_regs.reg_addr);
             break;
     }
 }
@@ -252,75 +274,15 @@ static void SpiRegs_ProcessWriteData(void)
  * -------------------------------------------------------------------------- */
 
 /**
- * @brief  SPI TransmitReceive complete callback (1 byte transferred)
+ * @brief  SPI TransmitReceive complete callback (one 5-byte frame transferred)
  */
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
 {
     if (hspi->Instance != SPI4)
         return;
 
-    switch (spi_regs.state)
-    {
-        case SPI_SLAVE_STATE_IDLE:
-            /* Received command byte */
-            SpiRegs_HandleCommand(spi_rx_byte);
-            break;
-
-        case SPI_SLAVE_STATE_DATA:
-            if (spi_regs.is_read)
-            {
-                /* Read transaction: send next data byte */
-                uint8_t reg_size = SpiRegs_GetRegSize(spi_regs.reg_addr);
-                if (spi_regs.byte_index < reg_size)
-                {
-                    spi_tx_byte = spi_regs.tx_buf[spi_regs.byte_index];
-                    spi_regs.byte_index++;
-                    HAL_SPI_TransmitReceive_IT(&hspi4, &spi_tx_byte, &spi_rx_byte, 1);
-                }
-                else
-                {
-                    /* All bytes sent - go back to idle, wait for new command */
-                    spi_regs.state = SPI_SLAVE_STATE_IDLE;
-                    SpiRegs_StartListening();
-                }
-            }
-            else
-            {
-                /* Write transaction: store received data byte */
-                uint8_t reg_size = SpiRegs_GetRegSize(spi_regs.reg_addr);
-                if (spi_regs.byte_index < reg_size)
-                {
-                    spi_regs.rx_buf[spi_regs.byte_index] = spi_rx_byte;
-                    spi_regs.byte_index++;
-
-                    if (spi_regs.byte_index >= reg_size)
-                    {
-                        /* All bytes received - process the write */
-                        SpiRegs_ProcessWriteData();
-                        spi_regs.state = SPI_SLAVE_STATE_IDLE;
-                        SpiRegs_StartListening();
-                    }
-                    else
-                    {
-                        /* More bytes expected */
-                        spi_tx_byte = 0x00;
-                        HAL_SPI_TransmitReceive_IT(&hspi4, &spi_tx_byte, &spi_rx_byte, 1);
-                    }
-                }
-                else
-                {
-                    /* Overflow - reset to idle */
-                    spi_regs.state = SPI_SLAVE_STATE_IDLE;
-                    SpiRegs_StartListening();
-                }
-            }
-            break;
-
-        default:
-            spi_regs.state = SPI_SLAVE_STATE_IDLE;
-            SpiRegs_StartListening();
-            break;
-    }
+    SpiRegs_HandleFrame();
+    SpiRegs_StartListening();
 }
 
 /**
@@ -331,8 +293,12 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
     if (hspi->Instance != SPI4)
         return;
 
-    /* Reset state and restart listening */
+    spi_error_count++;
+    spi_last_error = HAL_SPI_GetError(hspi);
+
+    /* Reset state and restart listening. Avoid printf in ISR context. */
     spi_regs.state = SPI_SLAVE_STATE_IDLE;
     spi_regs.byte_index = 0;
+    memset(spi_tx_frame, 0, sizeof(spi_tx_frame));
     SpiRegs_StartListening();
 }
