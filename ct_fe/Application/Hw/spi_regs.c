@@ -107,6 +107,11 @@ const SpiRegs_t* SpiRegs_GetContext(void)
     return &spi_regs;
 }
 
+uint32_t SpiRegs_GetRearmErrorCount(void) 
+{ 
+    return spi_rearm_error_count; 
+}
+
 /* --------------------------------------------------------------------------
  * Private functions
  * -------------------------------------------------------------------------- */

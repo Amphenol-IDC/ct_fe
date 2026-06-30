@@ -134,4 +134,10 @@ uint8_t SpiRegs_GetStop(uint32_t *value);
  */
 const SpiRegs_t* SpiRegs_GetContext(void);
 
+/**
+ * @brief  Get SPI re-arm error counter for debug
+ * @retval Number of failed HAL_SPI_TransmitReceive_IT re-arm attempts
+ */
+uint32_t SpiRegs_GetRearmErrorCount(void);
+
 #endif /* APPLICATION_HW_SPI_REGS_H_ */
