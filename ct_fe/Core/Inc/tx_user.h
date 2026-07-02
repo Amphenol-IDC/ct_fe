@@ -71,6 +71,10 @@
 #define TX_USER_H
 
 /* USER CODE BEGIN 1 */
+/* Enabled to detect thread stack overflow (e.g. ConnectivityTesterTask overrunning
+   its stack when printf() runs and corrupting adjacent globals such as hspi4).
+   NOTE: the ThreadX library objects must be rebuilt with this define active. */
+#define TX_ENABLE_STACK_CHECKING
 
 /* USER CODE END 1 */
 

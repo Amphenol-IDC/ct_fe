@@ -3,7 +3,7 @@
 #include "gpio_channels.h"
 #include "spi_regs.h"
 
-#define RX_CHECK_TASK_STACK_SIZE  4096U
+#define RX_CHECK_TASK_STACK_SIZE  2048U
 #define RX_CHECK_TASK_PRIORITY    10U
 #define RX_PAIR_CHECK_POLL_TICKS  1U
 #define RX_PAIR_RESULT_MASK       (SPI_REG_HOST_RX_MASK | SPI_REG_LANE_RX_MASK)
@@ -43,19 +43,12 @@ void ConnectivityTesterTask(ULONG argument)
     uint32_t ctrl_value;
     uint32_t stop_value;
     uint32_t prev_rx_only_result = 0;
-    uint32_t prev_spi_rearm_error_count = 0;
 
     /* Configure only TX pairs as outputs; RX pin setup remains under IOC/user control. */
     GpioChannels_ConfigTxOutputs();
 
     for (;;)
     {
-        uint32_t spi_rearm_error_count = SpiRegs_GetRearmErrorCount();
-        if (spi_rearm_error_count != prev_spi_rearm_error_count) {
-            printf("[SPI] rearm error count changed: %lu\r\n", (unsigned long)spi_rearm_error_count);
-            prev_spi_rearm_error_count = spi_rearm_error_count;
-        }
-
         if (SpiRegs_GetCtrl(&ctrl_value))
         {
             active_tx_mask |= (ctrl_value & TX_PAIR_CTRL_MASK);

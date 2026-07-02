@@ -83,7 +83,6 @@ uint8_t SpiRegs_GetCtrl(uint32_t *value)
     if (spi_regs.ctrl_written)
     {
         *value = spi_regs.ctrl;
-        printf("[SPI] CTRL write received: 0x%08lX\r\n", (unsigned long)*value);
         spi_regs.ctrl_written = 0;
         return 1;
     }
@@ -95,7 +94,6 @@ uint8_t SpiRegs_GetStop(uint32_t *value)
     if (spi_regs.stop_written)
     {
         *value = spi_regs.stop;
-        printf("[SPI] STOP write received: 0x%08lX\r\n", (unsigned long)*value);
         spi_regs.stop_written = 0;
         return 1;
     }
@@ -260,11 +258,13 @@ static void SpiRegs_ProcessWriteData(void)
         case SPI_REG_CTRL:
             spi_regs.ctrl = val32;
             spi_regs.ctrl_written = 1;
+            spi_regs.ctrl_write_seq++;
             break;
 
         case SPI_REG_STOP:
             spi_regs.stop = val32;
             spi_regs.stop_written = 1;
+            spi_regs.stop_write_seq++;
             break;
 
         /* RX_RESULT is Read-Only (RC), ignore writes */

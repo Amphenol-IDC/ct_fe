@@ -97,6 +97,12 @@ typedef struct {
     /* Flags for application */
     volatile uint8_t ctrl_written;  /* Set when CTRL register is written */
     volatile uint8_t stop_written;  /* Set when STOP register is written */
+
+    /* Monotonic write-event counters, for logging OUTSIDE the RT thread.
+     * A logger compares these against its own snapshot; no printf is done
+     * in the ISR or in the 1 ms polling thread. */
+    volatile uint32_t ctrl_write_seq;
+    volatile uint32_t stop_write_seq;
 } SpiRegs_t;
 
 /* --------------------------------------------------------------------------
