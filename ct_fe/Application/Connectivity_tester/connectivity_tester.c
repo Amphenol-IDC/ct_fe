@@ -67,7 +67,6 @@ void ConnectivityTesterTask(ULONG argument)
 
         if (rx_only_result != prev_rx_only_result)
         {
-// return debugging when 64 gpio_channel_table[] is properly defined:  printf("RX fault result changed: 0x%08lX\r\n", (unsigned long)rx_only_result);
             prev_rx_only_result = rx_only_result;
         }
 
