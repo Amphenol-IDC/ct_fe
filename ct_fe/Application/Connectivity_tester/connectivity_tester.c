@@ -18,8 +18,16 @@ static void ConnectivityTester_ApplyTxPattern(uint32_t active_tx_mask, uint8_t b
         uint32_t host_tx_bit = (SPI_REG_CHANNEL_BIT(i) << SPI_REG_HOST_TX_SHIFT);
         uint32_t lane_tx_bit = (SPI_REG_CHANNEL_BIT(i) << SPI_REG_LANE_TX_SHIFT);
 
-        GpioChannels_WriteTxBit(GPIO_CH_HOST_TX(i), (active_tx_mask & host_tx_bit) ? bit_value : 0U);
-        GpioChannels_WriteTxBit(GPIO_CH_LANE_TX(i), (active_tx_mask & lane_tx_bit) ? bit_value : 0U);
+        /* When channel is ACTIVE in mask, drive with bit_value; otherwise set both P and N to RESET */
+        if (active_tx_mask & host_tx_bit)
+            GpioChannels_WriteTxBit(GPIO_CH_HOST_TX(i), bit_value);
+        else
+            GpioChannels_WriteTxReset(GPIO_CH_HOST_TX(i));
+
+        if (active_tx_mask & lane_tx_bit)
+            GpioChannels_WriteTxBit(GPIO_CH_LANE_TX(i), bit_value);
+        else
+            GpioChannels_WriteTxReset(GPIO_CH_LANE_TX(i));
     }
 }
 

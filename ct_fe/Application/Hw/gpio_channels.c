@@ -19,8 +19,18 @@
 
 #define GPIO_RX_FAULT_CONFIRM_SAMPLES  6U
 
+/* A healthy RX pair carries a square wave, so its P line must keep toggling.
+ * If P stays at the same level for this many consecutive samples, the pair is
+ * considered stuck (e.g. P always '1', N always '0') and reported as faulty,
+ * even though P != N. */
+#define GPIO_RX_ACTIVITY_TIMEOUT_SAMPLES  10U
+
 static uint8_t rx_fault_streak[GPIO_CH_TOTAL] = {0};  /* Counts consecutive samples of P==N for each channel */
 static uint8_t rx_fault_active[GPIO_CH_TOTAL] = {0};  /* Latched fault state, cleared only when streak returns to 0 */
+
+static uint8_t rx_prev_p[GPIO_CH_TOTAL]     = {0};  /* Previous P level, used to detect toggling activity */
+static uint8_t rx_prev_p_valid[GPIO_CH_TOTAL] = {0};  /* 0 until the first sample has been taken */
+static uint8_t rx_static_streak[GPIO_CH_TOTAL] = {0};  /* Consecutive samples with no P transition */
 
 static uint8_t GpioChannels_IsTxChannel(uint8_t ch)
 {
@@ -74,17 +84,17 @@ static const GpioChannel_t gpio_channel_table[GPIO_CH_TOTAL] = {
     /* [15] Host Tx Ch7 */ { {GPIOC, GPIO_PIN_0},  {GPIOC, GPIO_PIN_1}  },
 
     /* ===== Lane Rx: channels 0-7 (SPI register bits 15:8) ===== */
-    /* [16] Lane Rx Ch0 */ { {GPIOC, GPIO_PIN_2},  {GPIOC, GPIO_PIN_3}  },
+    /* [16] Lane Rx Ch0 */ { {GPIOC, GPIO_PIN_10}, {GPIOC, GPIO_PIN_11} },
     /* [17] Lane Rx Ch1 */ { {GPIOC, GPIO_PIN_4},  {GPIOC, GPIO_PIN_5}  },
     /* [18] Lane Rx Ch2 */ { {GPIOC, GPIO_PIN_6},  {GPIOC, GPIO_PIN_7}  },
-    /* [19] Lane Rx Ch3 */ { {GPIOC, GPIO_PIN_8},  {GPIOC, GPIO_PIN_9}  },
-    /* [20] Lane Rx Ch4 */ { {GPIOC, GPIO_PIN_10}, {GPIOC, GPIO_PIN_11} },
+    /* [19] Lane Rx Ch3 */ { {GPIOD, GPIO_PIN_4},  {GPIOD, GPIO_PIN_5}  },
+    /* [20] Lane Rx Ch4 */ { {GPIOC, GPIO_PIN_2},  {GPIOC, GPIO_PIN_3}  },
     /* [21] Lane Rx Ch5 */ { {GPIOC, GPIO_PIN_12}, {GPIOC, GPIO_PIN_13} },
     /* [22] Lane Rx Ch6 */ { {GPIOD, GPIO_PIN_0},  {GPIOD, GPIO_PIN_1}  },
     /* [23] Lane Rx Ch7 */ { {GPIOD, GPIO_PIN_2},  {GPIOD, GPIO_PIN_3}  },
 
     /* ===== Lane Tx: channels 0-7 (SPI register bits 7:0) ===== */
-    /* [24] Lane Tx Ch0 */ { {GPIOD, GPIO_PIN_4},  {GPIOD, GPIO_PIN_5}  },
+    /* [24] Lane Tx Ch0 */ { {GPIOC, GPIO_PIN_8},  {GPIOC, GPIO_PIN_9}  },
     /* [25] Lane Tx Ch1 */ { {GPIOD, GPIO_PIN_6},  {GPIOD, GPIO_PIN_7}  },
     /* [26] Lane Tx Ch2 */ { {GPIOD, GPIO_PIN_10}, {GPIOD, GPIO_PIN_11} },
     /* [27] Lane Tx Ch3 */ { {GPIOD, GPIO_PIN_12}, {GPIOD, GPIO_PIN_13} },
@@ -211,7 +221,34 @@ uint32_t GpioChannels_CheckAllFaults(void)
         /* RX faults are qualified to reject short transients between P/N updates. */
         if (GpioChannels_IsRxChannel(ch))
         {
-            if (p == n)
+            /* --- Activity (toggle) tracking -------------------------------
+             * A valid RX pair carries a square wave, so P must keep toggling.
+             * Detect whether P changed level since the previous sample. */
+            uint8_t p_level = (p != GPIO_PIN_RESET) ? 1U : 0U;
+            uint8_t no_activity = 0U;
+
+            if (rx_prev_p_valid[ch] && (p_level == rx_prev_p[ch]))
+            {
+                if (rx_static_streak[ch] < GPIO_RX_ACTIVITY_TIMEOUT_SAMPLES)
+                {
+                    rx_static_streak[ch]++;
+                }
+            }
+            else
+            {
+                rx_static_streak[ch] = 0U;  /* Toggle seen: pair is active */
+            }
+
+            rx_prev_p[ch]       = p_level;
+            rx_prev_p_valid[ch] = 1U;
+
+            if (rx_static_streak[ch] >= GPIO_RX_ACTIVITY_TIMEOUT_SAMPLES)
+            {
+                no_activity = 1U;  /* P stuck at a constant level -> faulty */
+            }
+
+            /* Fault if P/N are not complementary OR the pair is not toggling. */
+            if ((p == n) || no_activity)
             {
                 if (rx_fault_streak[ch] < GPIO_RX_FAULT_CONFIRM_SAMPLES)
                 {
@@ -265,6 +302,21 @@ void GpioChannels_WriteTxBit(uint8_t ch, uint8_t bit)
     HAL_GPIO_WritePin(gpio_channel_table[ch].n.port,
                       gpio_channel_table[ch].n.pin,
                       bit ? GPIO_PIN_RESET : GPIO_PIN_SET);
+}
+
+void GpioChannels_WriteTxReset(uint8_t ch)
+{
+    if (!GpioChannels_IsTxChannel(ch))
+        return;
+
+    /* Set both P and N to RESET (logical idle state) */
+    HAL_GPIO_WritePin(gpio_channel_table[ch].p.port,
+                      gpio_channel_table[ch].p.pin,
+                      GPIO_PIN_RESET);
+
+    HAL_GPIO_WritePin(gpio_channel_table[ch].n.port,
+                      gpio_channel_table[ch].n.pin,
+                      GPIO_PIN_RESET);
 }
 
 const GpioChannel_t* GpioChannels_GetDescriptor(uint8_t ch)

@@ -114,6 +114,12 @@ uint32_t GpioChannels_CheckAllFaults(void);
 void GpioChannels_WriteTxBit(uint8_t ch, uint8_t bit);
 
 /**
+ * @brief  Set one TX differential channel to idle (both P=0, N=0)
+ * @param  ch: TX channel index (Host TX: 8..15, Lane TX: 24..31)
+ */
+void GpioChannels_WriteTxReset(uint8_t ch);
+
+/**
  * @brief  Get channel descriptor (for debug)
  * @param  ch: channel index (0..31)
  * @retval Pointer to GpioChannel_t
