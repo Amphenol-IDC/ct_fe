@@ -16,10 +16,11 @@
  ******************************************************************************
  */
 
-#include "spi_regs.h"
-#include "main.h"
 #include <string.h>
 #include <stdio.h>
+#include "spi_regs.h"
+#include "main.h"
+#include "adc.h"
 
 /* External SPI handle from main.c */
 extern SPI_HandleTypeDef hspi4;
@@ -61,8 +62,8 @@ void SpiRegs_Init(void)
     memset(spi_tx_frame, 0, sizeof(spi_tx_frame));
 
     /* Initialize read-only registers */
-    spi_regs.device_type = DEVICE_TYPE_VALUE;
-    spi_regs.device_rev  = DEVICE_REV_VALUE;
+    spi_regs.device_type = DEVICE_TYPE_VALUE /*gpio_get_host_board_type()*/;
+    spi_regs.device_rev  = DEVICE_REV_VALUE /*gpio_get_host_board_rev()*/;
     spi_regs.device_id   = DEVICE_ID_VALUE;
 
     /* Start in idle state */

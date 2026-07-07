@@ -5,8 +5,7 @@
  ******************************************************************************
  */
 
-#ifndef APPLICATION_HW_SPI_REGS_H_
-#define APPLICATION_HW_SPI_REGS_H_
+#pragma once
 
 #include <stdint.h>
 
@@ -146,4 +145,3 @@ const SpiRegs_t* SpiRegs_GetContext(void);
  */
 uint32_t SpiRegs_GetRearmErrorCount(void);
 
-#endif /* APPLICATION_HW_SPI_REGS_H_ */

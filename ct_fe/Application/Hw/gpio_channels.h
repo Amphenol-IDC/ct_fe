@@ -15,8 +15,7 @@
  ******************************************************************************
  */
 
-#ifndef APPLICATION_HW_GPIO_CHANNELS_H_
-#define APPLICATION_HW_GPIO_CHANNELS_H_
+#pragma once
 
 #include "main.h"
 
@@ -126,4 +125,3 @@ void GpioChannels_WriteTxReset(uint8_t ch);
  */
 const GpioChannel_t* GpioChannels_GetDescriptor(uint8_t ch);
 
-#endif /* APPLICATION_HW_GPIO_CHANNELS_H_ */
