@@ -3096,6 +3096,16 @@ void HAL_SPI_IRQHandler(SPI_HandleTypeDef *hspi)
     /* For the IT based receive extra polling maybe required for last packet */
     if (HAL_IS_BIT_CLR(hspi->Instance->CFG1, SPI_CFG1_TXDMAEN | SPI_CFG1_RXDMAEN))
     {
+      /* CT_FE GUARD: never poll more than the transfer size. A desynced slave
+       * (over-clocked frame) can leave RxXferCount out of range; without this
+       * bound the loop would write RXDR data past pRxBuffPtr's buffer and
+       * corrupt adjacent RAM (including the SPI handle) -> HardFault. */
+      if (hspi->RxXferCount > hspi->RxXferSize)
+      {
+        hspi->RxXferCount = 0U;
+        SET_BIT(hspi->ErrorCode, HAL_SPI_ERROR_OVR);
+      }
+
       /* Pooling remaining data */
       while (hspi->RxXferCount != 0UL)
       {
@@ -3739,6 +3749,18 @@ static void SPI_DMARxAbortCallback(DMA_HandleTypeDef *hdma)
   */
 static void SPI_RxISR_8BIT(SPI_HandleTypeDef *hspi)
 {
+  /* CT_FE GUARD: In slave mode an extra (glitch/over-clocked) RX event can fire
+   * when the transfer is already complete (RxXferCount == 0). Decrementing here
+   * would underflow RxXferCount to 0xFFFF and make the EOT poll loop walk
+   * pRxBuffPtr through RAM, corrupting the handle. Flush and stop instead. */
+  if (hspi->RxXferCount == 0UL)
+  {
+    volatile uint8_t rx_flush = (*(__IO uint8_t *)&hspi->Instance->RXDR);
+    (void)rx_flush;
+    __HAL_SPI_DISABLE_IT(hspi, SPI_IT_RXP);
+    return;
+  }
+
   /* Receive data in 8 Bit mode */
   *((uint8_t *)hspi->pRxBuffPtr) = (*(__IO uint8_t *)&hspi->Instance->RXDR);
   hspi->pRxBuffPtr += sizeof(uint8_t);

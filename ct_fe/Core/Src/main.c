@@ -595,35 +595,8 @@ void StartWDTask(ULONG argument)
 {
     uint8_t led_state = 0; // 0=green, 1=yellow, 2=red
 
-    /* Logging snapshots: this is the ONLY thread that calls printf at run time,
-     * so printf's large/blocking stack usage never lands in the 1 ms RT thread. */
-    const SpiRegs_t *spi_ctx = SpiRegs_GetContext();
-    uint32_t log_prev_ctrl_seq  = 0;
-    uint32_t log_prev_stop_seq  = 0;
-    uint32_t log_prev_rearm_cnt = 0;
-
     for (;;)
     {
-        /* --- Drain deferred SPI log events (safe: 500 ms, big-enough stack) --- */
-        if (spi_ctx->ctrl_write_seq != log_prev_ctrl_seq)
-        {
-            printf("[SPI] CTRL write received: 0x%08lX\r\n", (unsigned long)spi_ctx->ctrl);
-            log_prev_ctrl_seq = spi_ctx->ctrl_write_seq;
-        }
-        if (spi_ctx->stop_write_seq != log_prev_stop_seq)
-        {
-            printf("[SPI] STOP write received: 0x%08lX\r\n", (unsigned long)spi_ctx->stop);
-            log_prev_stop_seq = spi_ctx->stop_write_seq;
-        }
-        {
-            uint32_t rearm = SpiRegs_GetRearmErrorCount();
-            if (rearm != log_prev_rearm_cnt)
-            {
-                printf("[SPI] rearm error count changed: %lu\r\n", (unsigned long)rearm);
-                log_prev_rearm_cnt = rearm;
-            }
-        }
-
         // TBD replace the LED off and on with the APIs gpio_led1_on, gpio_led1_off for our HW
 
         // Turn off all LEDs

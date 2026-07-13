@@ -145,3 +145,12 @@ const SpiRegs_t* SpiRegs_GetContext(void);
  */
 uint32_t SpiRegs_GetRearmErrorCount(void);
 
+/**
+ * @brief  Resynchronize the SPI slave on an NSS rising edge (end of frame).
+ *
+ * Call this from an EXTI interrupt configured on the NSS pin (rising edge).
+ * It aborts and re-arms the slave so stale FIFO/counter state can never carry
+ * across frames. This is the robust fix for the overnight desync HardFault.
+ */
+void SpiRegs_OnNssRising(void);
+

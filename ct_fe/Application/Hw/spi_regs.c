@@ -121,11 +121,46 @@ static void SpiRegs_StartListening(void)
 
     memset(spi_rx_frame, 0, sizeof(spi_rx_frame));
 
+    /*
+     * Always fully abort before re-arming. In slave mode a spurious SCK edge,
+     * an aborted frame or an OVR event can leave the peripheral FIFO and the
+     * HAL software counters (pRxBuffPtr / RxXferCount) desynchronized from the
+     * 5-byte frame boundary. Re-arming on top of that stale state lets the HAL
+     * write received bytes past the end of spi_rx_frame[] and corrupt adjacent
+     * memory (including the hspi4 handle itself). HAL_SPI_Abort() flushes the
+     * FIFOs and resets the counters/pointers so every frame starts clean.
+     */
+    if (hspi4.State != HAL_SPI_STATE_READY)
+    {
+        (void)HAL_SPI_Abort(&hspi4);
+    }
+
     status = HAL_SPI_TransmitReceive_IT(&hspi4, spi_tx_frame, spi_rx_frame, SPI_FRAME_SIZE);
     if (status != HAL_OK)
     {
         spi_rearm_error_count++;
+
+        /* Force a clean state and try once more so we never get stuck. */
+        (void)HAL_SPI_Abort(&hspi4);
+        status = HAL_SPI_TransmitReceive_IT(&hspi4, spi_tx_frame, spi_rx_frame, SPI_FRAME_SIZE);
+        if (status != HAL_OK)
+        {
+            spi_rearm_error_count++;
+        }
     }
+}
+
+/**
+ * @brief  Resynchronize the SPI slave on an NSS rising edge (end of frame).
+ *
+ * Wire this to an EXTI interrupt on the NSS pin (rising edge). Calling it on
+ * every NSS de-assertion guarantees the slave never carries stale FIFO/counter
+ * state into the next frame, which is the definitive fix for the overnight
+ * desynchronization HardFault.
+ */
+void SpiRegs_OnNssRising(void)
+{
+    SpiRegs_StartListening();
 }
 
 static uint8_t SpiRegs_GetRegSize(uint8_t addr)
@@ -306,5 +341,12 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
     spi_regs.state = SPI_SLAVE_STATE_IDLE;
     spi_regs.byte_index = 0;
     memset(spi_tx_frame, 0, sizeof(spi_tx_frame));
+
+    /*
+     * Fully abort so the FIFO is flushed and pRxBuffPtr / RxXferCount are reset
+     * before we re-arm. Without this, residual FIFO bytes and stale counters
+     * survive into the next transfer and can drive an out-of-bounds RX write.
+     */
+    (void)HAL_SPI_Abort(hspi);
     SpiRegs_StartListening();
 }
